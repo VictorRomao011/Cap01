@@ -605,6 +605,152 @@ body{
   outline-offset: 2px;
 }
 
+
+
+/* START MOD: Responsividade mobile incremental
+   Objetivo: adaptar interface existente para telas menores sem alterar HTML, IDs, JS ou layout base em desktop. */
+#viewport,
+#viewport canvas{
+  width:100vw !important;
+  height:100vh !important;
+  touch-action:none; /* melhora pinch/drag no canvas sem scroll involuntário do navegador */
+}
+
+@media (max-width: 1024px){
+  .topbar{
+    gap:12px;
+    align-items:flex-start;
+  }
+  .topbar-right{
+    flex-wrap:wrap;
+    justify-content:flex-end;
+    max-width:46vw;
+    row-gap:6px;
+  }
+  .pill{
+    padding:6px 9px;
+    font-size:10px;
+    white-space:nowrap;
+  }
+  .info-panel{
+    max-height:calc(100vh - 190px);
+    overflow:auto;
+    scrollbar-width:thin;
+  }
+  .views{
+    max-height:calc(100vh - 190px);
+    overflow:auto;
+    scrollbar-width:thin;
+  }
+}
+
+@media (max-width: 860px){
+  html,body{
+    width:100%;
+    height:100%;
+    overflow:hidden;
+  }
+  .topbar{
+    padding:calc(10px + env(safe-area-inset-top)) 12px 8px;
+    gap:8px;
+  }
+  .brand{
+    min-width:0;
+    gap:10px;
+  }
+  .brand-mark{
+    width:34px;
+    height:34px;
+    flex:0 0 auto;
+  }
+  .brand-text{
+    min-width:0;
+  }
+  .brand-text .t1{
+    font-size:9px;
+    letter-spacing:.05em;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width:52vw;
+  }
+  .brand-text .t2{
+    font-size:14px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    max-width:52vw;
+  }
+  .topbar-right{
+    max-width:42vw;
+    gap:5px;
+    justify-content:flex-end;
+  }
+  .topbar-right .pill{
+    font-size:9px;
+    padding:5px 7px;
+  }
+  .topbar-right .pill:nth-child(2){
+    display:none; /* evita sobreposição no mobile sem remover o elemento */
+  }
+  .readout{
+    top:auto;
+    left:10px;
+    right:10px;
+    bottom:calc(86px + env(safe-area-inset-bottom));
+    transform:none;
+    justify-content:center;
+    overflow-x:auto;
+    white-space:nowrap;
+    max-width:calc(100vw - 20px);
+  }
+  .dock{
+    left:8px;
+    right:8px;
+    bottom:calc(10px + env(safe-area-inset-bottom));
+    transform:none;
+    width:auto;
+    max-width:none;
+    overflow-x:auto;
+    overflow-y:hidden;
+    justify-content:flex-start;
+    scrollbar-width:none;
+    -webkit-overflow-scrolling:touch;
+  }
+  .dock::-webkit-scrollbar{display:none;}
+  .btn{
+    flex:0 0 auto;
+    min-width:48px;
+    justify-content:center;
+    padding:9px 10px;
+  }
+  .axis-gizmo{
+    left:10px;
+    bottom:calc(150px + env(safe-area-inset-bottom));
+    width:58px;
+    height:58px;
+    opacity:.82;
+  }
+}
+
+@media (max-width: 480px){
+  .topbar-right .pill:first-child{
+    display:none; /* mantém FPS visível e reduz ruído em telas muito estreitas */
+  }
+  .readout{
+    font-size:8.5px;
+    gap:8px;
+    padding:6px 8px;
+  }
+  .dock{
+    padding:7px;
+  }
+  .btn{
+    padding:8px 9px;
+  }
+}
+/* END MOD */
+
 </style>
 </head>
 <body>
@@ -870,6 +1016,22 @@ controls.maxDistance = 6000;
 controls.autoRotate = true;
 controls.autoRotateSpeed = 0.6;
 
+// START MOD: Ajustes incrementais de zoom/controle
+// Mantém OrbitControls existente, apenas suaviza interação e melhora uso em mobile/touch.
+controls.enableZoom = true;
+controls.zoomSpeed = 0.72;
+controls.rotateSpeed = window.matchMedia('(pointer: coarse)').matches ? 0.48 : 0.72;
+controls.panSpeed = window.matchMedia('(pointer: coarse)').matches ? 0.58 : 0.82;
+controls.screenSpacePanning = true;
+controls.enablePan = true;
+controls.minDistance = Math.min(controls.minDistance, 220);
+controls.maxDistance = Math.max(controls.maxDistance, 7000);
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN
+};
+// END MOD
+
 const groundGeo = new THREE.PlaneGeometry(6000, 6000);
 const groundMat = new THREE.ShadowMaterial({ opacity: 0.35 });
 const ground = new THREE.Mesh(groundGeo, groundMat);
@@ -891,6 +1053,23 @@ const modelBuffer = b64ToArrayBuffer(MODEL_B64);
 
 let modelRoot = null;
 let wireframeOn = false;
+
+// START MOD: Estruturas para foco por clique em componentes
+// Mantém o carregamento/renderização original; apenas registra meshes clicáveis para raycasting.
+const componentFocusRaycaster = new THREE.Raycaster();
+const componentFocusPointer = new THREE.Vector2();
+const componentFocusMeshes = [];
+let componentFocusPointerDown = null;
+
+// Mapping de palavras-chave para facilitar ajuste futuro caso os nomes dos meshes mudem no export NX/STEP.
+// Ex.: se o STEP vier com nome "nameplate", ele será reconhecido como "Plaqueta".
+const componentFocusNameMap = [
+  { label: 'Buchas', keywords: ['bucha', 'buchas', 'porcelain', 'porcelana', 'isolador', 'insulator'] },
+  { label: 'Plaqueta', keywords: ['plaqueta', 'placa', 'plate', 'nameplate', 'tag'] },
+  { label: 'Abraçadeira', keywords: ['abraçadeira', 'abracadeira', 'clamp', 'bracket', 'suporte', 'fixacao', 'fixação'] },
+  { label: 'Bujão', keywords: ['bujão', 'bujao', 'plug', 'drain', 'tampao', 'tampão'] }
+];
+// END MOD
 
 loader.parse(modelBuffer, '', (gltf) => {
   const root = gltf.scene;
@@ -1063,6 +1242,10 @@ loader.parse(modelBuffer, '', (gltf) => {
       obj.castShadow = true;
       obj.receiveShadow = true;
       obj.frustumCulled = false;
+
+      // START MOD: registra mesh para raycasting de foco por clique
+      componentFocusMeshes.push(obj);
+      // END MOD
     }
   });
 
@@ -1129,20 +1312,107 @@ function setView(name, sizeOverride, centerOverride){
 }
 
 function animateCamera(newPos, newTarget){
+  // START MOD: transição de câmera mais suave e cancelável
+  // Mantém a mesma função e assinatura já usada pelas vistas padrão.
+  if (window.__cameraTransitionFrame) cancelAnimationFrame(window.__cameraTransitionFrame);
   const startPos = camera.position.clone();
   const startTarget = controls.target.clone();
-  const duration = 800;
+  const duration = 900;
   const t0 = performance.now();
   function step(){
     const t = Math.min(1, (performance.now() - t0)/duration);
-    const e = 1 - Math.pow(1 - t, 3);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     camera.position.lerpVectors(startPos, newPos, e);
     controls.target.lerpVectors(startTarget, newTarget, e);
     controls.update();
-    if (t < 1) requestAnimationFrame(step);
+    if (t < 1) window.__cameraTransitionFrame = requestAnimationFrame(step);
+    else window.__cameraTransitionFrame = null;
   }
   step();
+  // END MOD
 }
+
+// START MOD: Foco inteligente por clique nos componentes
+function getComponentFocusLabel(obj){
+  let node = obj;
+  while (node){
+    const name = (node.name || '').toLowerCase();
+    for (const item of componentFocusNameMap){
+      if (item.keywords.some(k => name.includes(k))) return item.label;
+    }
+    node = node.parent;
+  }
+
+  const kind = obj.material?.userData?.kind || '';
+  if (kind === 'porcelain') return 'Buchas';
+
+  // Fallback: o export atual agrupa algumas ferragens; ainda permite foco no mesh clicado.
+  if (kind === 'terminal' || kind === 'inox_raw') return 'Componente metálico';
+  if (kind === 'painted') return 'Corpo/Plaqueta';
+  return 'Componente';
+}
+
+function focusCameraOnComponent(obj, hitPoint){
+  if (!obj || !modelRoot) return;
+
+  const box = new THREE.Box3().setFromObject(obj);
+  if (!Number.isFinite(box.min.x) || !Number.isFinite(box.max.x)) return;
+
+  const center = hitPoint ? hitPoint.clone() : box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const radius = Math.max(size.x, size.y, size.z, 80);
+
+  const currentDirection = camera.position.clone().sub(controls.target).normalize();
+  const minFocusDistance = window.matchMedia('(pointer: coarse)').matches ? 360 : 280;
+  const maxFocusDistance = 1800;
+  const distance = THREE.MathUtils.clamp(radius * 2.8, minFocusDistance, maxFocusDistance);
+  const newPosition = center.clone().add(currentDirection.multiplyScalar(distance));
+
+  controls.autoRotate = false;
+  btnTour.classList.remove('active');
+  animateCamera(newPosition, center);
+}
+
+function handleComponentFocusPointerDown(event){
+  componentFocusPointerDown = {
+    x: event.clientX,
+    y: event.clientY,
+    time: performance.now(),
+    pointerId: event.pointerId
+  };
+}
+
+function handleComponentFocusPointerUp(event){
+  if (!modelRoot || !componentFocusPointerDown) return;
+  if (event.pointerId !== componentFocusPointerDown.pointerId) return;
+
+  const dx = event.clientX - componentFocusPointerDown.x;
+  const dy = event.clientY - componentFocusPointerDown.y;
+  const moved = Math.hypot(dx, dy);
+  const elapsed = performance.now() - componentFocusPointerDown.time;
+  componentFocusPointerDown = null;
+
+  // Evita disparar foco durante orbit/pan/drag; considera apenas toque/clique curto.
+  if (moved > 8 || elapsed > 520) return;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  componentFocusPointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  componentFocusPointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  componentFocusRaycaster.setFromCamera(componentFocusPointer, camera);
+  const hits = componentFocusRaycaster.intersectObjects(componentFocusMeshes, true)
+    .filter(hit => hit.object && hit.object.isMesh);
+
+  if (!hits.length) return;
+
+  const hit = hits[0];
+  const label = getComponentFocusLabel(hit.object);
+  if (label) focusCameraOnComponent(hit.object, hit.point);
+}
+
+renderer.domElement.addEventListener('pointerdown', handleComponentFocusPointerDown, { passive: true });
+renderer.domElement.addEventListener('pointerup', handleComponentFocusPointerUp, { passive: true });
+// END MOD
 
 document.querySelectorAll('.view-btn').forEach(b => {
   b.addEventListener('click', () => setView(b.dataset.view));
@@ -1213,11 +1483,16 @@ function updateReadouts(){
   camDist.textContent = `${camera.position.distanceTo(controls.target).toFixed(0)} mm`;
 }
 
-window.addEventListener('resize', () => {
+// START MOD: Responsividade do canvas 3D
+function resizeViewer(){
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight, false);
+}
+window.addEventListener('resize', resizeViewer, { passive: true });
+window.addEventListener('orientationchange', () => setTimeout(resizeViewer, 250), { passive: true });
+// END MOD
 
 function animate(){
   requestAnimationFrame(animate);
