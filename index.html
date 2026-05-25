@@ -751,6 +751,49 @@ body{
 }
 /* END MOD */
 
+/* CENTERED_RESPONSIVE: responsive layout + safe-area */
+.info-panel, .views {
+  max-height: min(calc(100vh - 170px), 580px);
+  overflow-y: auto;
+}
+.dock {
+  bottom: max(24px, calc(24px + env(safe-area-inset-bottom, 0px)));
+}
+@media (max-width: 768px) {
+  .topbar { padding: 10px 12px; }
+  .topbar-right .pill:not(#fps-pill) { display: none; }
+  .brand-text .t2 { display: none; }
+  .info-panel {
+    top: 68px;
+    left: 8px;
+    width: min(256px, calc(52vw - 12px));
+    max-height: min(42vh, 300px);
+    padding: 12px 14px;
+    font-size: 10px;
+  }
+  .views {
+    top: 68px;
+    right: 8px;
+    max-height: min(42vh, 300px);
+    padding: 8px;
+  }
+  .view-btn { padding: 5px 8px; font-size: 9px; }
+  .dock {
+    left: max(6px, env(safe-area-inset-left, 6px));
+    right: max(6px, env(safe-area-inset-right, 6px));
+    bottom: max(8px, env(safe-area-inset-bottom, 8px));
+    transform: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+    padding: 6px;
+  }
+  .btn { padding: 6px 9px; font-size: 9px; gap: 4px; }
+  .btn .lbl { display: none; }
+  .btn svg { width: 16px; height: 16px; }
+  .btn-sep { display: none; }
+}
+
 </style>
 </head>
 <body>
@@ -860,6 +903,10 @@ body{
   <button class="btn" id="btn-edges" title="Mostrar arestas">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16"/><path d="M4 4l16 16M4 20l16-16"/></svg>
     <span class="lbl">Arestas</span>
+  </button>
+  <button class="btn" id="btn-leak" title="Pontos de Vazamento">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+    <span class="lbl">Vazamento</span>
   </button>
   <button class="btn" id="btn-grid" title="Plano de referência">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>
@@ -1023,12 +1070,12 @@ controls.zoomSpeed = 0.72;
 controls.rotateSpeed = window.matchMedia('(pointer: coarse)').matches ? 0.48 : 0.72;
 controls.panSpeed = window.matchMedia('(pointer: coarse)').matches ? 0.58 : 0.82;
 controls.screenSpacePanning = true;
-controls.enablePan = true;
+controls.enablePan = false;  // pan disabled: target stays locked to model center
 controls.minDistance = Math.min(controls.minDistance, 220);
 controls.maxDistance = Math.max(controls.maxDistance, 7000);
 controls.touches = {
   ONE: THREE.TOUCH.ROTATE,
-  TWO: THREE.TOUCH.DOLLY_PAN
+  TWO: THREE.TOUCH.DOLLY_ROTATE
 };
 // END MOD
 
@@ -1052,6 +1099,7 @@ const loader = new GLTFLoader();
 const modelBuffer = b64ToArrayBuffer(MODEL_B64);
 
 let modelRoot = null;
+let _modelCenter = null;  // locked to bbox center after model load
 let wireframeOn = false;
 
 // START MOD: Estruturas para foco por clique em componentes
@@ -1257,6 +1305,23 @@ loader.parse(modelBuffer, '', (gltf) => {
   root.position.y -= box.min.y;
 
   scene.add(root);
+
+  // CENTERED_RESPONSIVE: lock controls.target to exact computed model center
+  {
+    const _cBB = new THREE.Box3().setFromObject(root);
+    _modelCenter = _cBB.getCenter(new THREE.Vector3());
+    const _cSz = new THREE.Vector3(); _cBB.getSize(_cSz);
+    const _cMax = Math.max(_cSz.x, _cSz.y, _cSz.z);
+    controls.target.copy(_modelCenter);
+    // Near/far tuned to model size (avoids clipping artifacts)
+    camera.near = Math.max(1, _cMax * 0.001);
+    camera.far  = _cMax * 200;
+    camera.updateProjectionMatrix();
+    // Distance limits relative to model size
+    controls.minDistance = _cMax * 0.12;
+    controls.maxDistance = _cMax * 15;
+    controls.update();
+  }
 
   // Subtle edge overlay — soft on white surfaces, slightly stronger on metallics
   modelRoot.traverse((obj) => {
@@ -1489,16 +1554,382 @@ function resizeViewer(){
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight, false);
+  updateCallouts();
 }
 window.addEventListener('resize', resizeViewer, { passive: true });
 window.addEventListener('orientationchange', () => setTimeout(resizeViewer, 250), { passive: true });
 // END MOD
+
+// ===== MODULO: PONTOS DE VAZAMENTO — FINAL (producao) =====
+
+// Ordem de exibicao no painel
+const LEAK_ALL_LABELS = ["1","2","3","4","5","6","7","8","9A","9B","10","11A","11B","12","13","14"];
+
+// Coordenadas calibradas — world/scene space (raycasting no modelo real)
+const LEAK_POINTS_RAW = {
+  "1":   { x:   4.3, y: 1441.0, z: -117.2 },
+  "2":   { x:  -7.0, y: 1384.0, z: -158.5 },
+  "3":   { x:  25.7, y: 1156.9, z:  -94.1 },
+  "4":   { x:  28.0, y: 1135.0, z:  -81.9 },
+  "5":   { x:  22.3, y: 1138.0, z:  -18.9 },
+  "6":   { x:  33.2, y: 1135.0, z:   19.8 },
+  "7":   { x: -55.4, y:    5.0, z:  -60.2 },
+  "8":   { x: -88.7, y:    5.0, z:  154.3 },
+  "9A":  { x: -70.4, y:  945.0, z:  173.6 },
+  "9B":  { x: -62.2, y:  113.0, z: -173.7 },
+  "10":  { x:  60.8, y:  602.2, z: -177.4 },
+  "11A": { x:  12.7, y:  378.9, z:  173.0 },
+  "11B": { x:  31.7, y:    9.7, z:  173.0 },
+  "12":  { x: 105.1, y:    5.0, z:  167.3 },
+  "13":  { x: 108.4, y:    5.0, z:  -62.8 },
+  "14":  { x:  10.5, y: 1144.0, z:    8.9 }
+};
+
+// Valida e filtra — pontos ausentes sao logados e ignorados
+const LEAK_POINTS = {};
+LEAK_ALL_LABELS.forEach(lbl => {
+  if (lbl in LEAK_POINTS_RAW) {
+    LEAK_POINTS[lbl] = LEAK_POINTS_RAW[lbl];
+  } else {
+    console.warn('[FINAL] Ponto ' + lbl + ' nao calibrado — ignorado');
+  }
+});
+
+// --- Selecao ---
+const selectedLeakPoints = new Set();
+
+// --- Marcadores 3D ---
+const _dotGrp = new THREE.Group();
+_dotGrp.name = 'leakDots';
+_dotGrp.visible = false;
+scene.add(_dotGrp);
+const _dotMeshes = {};
+{
+  const _dGeo  = new THREE.SphereGeometry(5, 10, 6);
+  const _dMat  = new THREE.MeshBasicMaterial({ color: 0x22d3ee, depthTest: true, transparent: true, opacity: 0.9 });
+  const _dMatH = new THREE.MeshBasicMaterial({ color: 0xfacc15, depthTest: true, transparent: true, opacity: 1.0 });
+  LEAK_ALL_LABELS.forEach(lbl => {
+    if (!(lbl in LEAK_POINTS)) return;
+    const pos = LEAK_POINTS[lbl];
+    const m = new THREE.Mesh(_dGeo, _dMat.clone());
+    m.position.set(pos.x, pos.y, pos.z);
+    m.visible = false;
+    m.userData.lbl     = lbl;
+    m.userData.matNorm = m.material;
+    m.userData.matHigh = _dMatH.clone();
+    _dotGrp.add(m);
+    _dotMeshes[lbl] = m;
+  });
+}
+
+// --- CSS + overlay SVG/HTML ---
+(function _initLkOverlay() {
+  const sty = document.createElement('style');
+  sty.textContent =
+    '#_lk_svg{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:8;overflow:visible}' +
+    '#_lk_html{position:fixed;inset:0;pointer-events:none;z-index:9}' +
+    '._lk_bubble{position:absolute;width:170px;background:rgba(8,14,22,.92);' +
+      'border:1px solid rgba(0,167,168,.65);border-left:3px solid rgba(0,167,168,.88);' +
+      'border-radius:6px;padding:5px 9px;box-shadow:0 4px 16px rgba(0,0,0,.30);display:block;opacity:0;transition:opacity .2s}' +
+    '._lk_bubble._lk_active{border-left-color:#facc15;border-color:rgba(250,204,21,.65);box-shadow:0 0 12px rgba(250,204,21,.35)}' +
+    '._lk_title{display:block;color:#22d3ee;font-size:11px;font-weight:700;font-family:"Segoe UI",Arial,sans-serif;letter-spacing:.02em;line-height:1.35}' +
+    '._lk_desc{display:block;color:rgba(200,210,216,.80);font-size:9px;font-family:"Segoe UI",Arial,sans-serif;margin-top:2px;line-height:1.35}' +
+    '#_lk_panel{padding:0;overflow-y:auto;max-height:calc(100% - 20px)}' +
+    '#_lk_panel h3{color:#22d3ee;font-size:12px;font-weight:700;margin:0 0 6px;padding:0 0 6px;border-bottom:1px solid rgba(0,167,168,.35)}' +
+    '._lk_actions{display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap}' +
+    '._lk_btn{background:rgba(0,167,168,.15);border:1px solid rgba(0,167,168,.40);color:#22d3ee;' +
+      'font-size:9px;padding:3px 8px;border-radius:4px;cursor:pointer;font-family:"Segoe UI",Arial,sans-serif;transition:background .15s;pointer-events:all}' +
+    '._lk_btn:hover{background:rgba(0,167,168,.30)}' +
+    '._lk_pitem{display:flex;align-items:center;gap:7px;padding:4px 6px;border-radius:5px;cursor:pointer;transition:background .15s;pointer-events:all;user-select:none}' +
+    '._lk_pitem:hover{background:rgba(0,167,168,.10)}' +
+    '._lk_pitem._lk_sel{background:rgba(250,204,21,.10);outline:1px solid rgba(250,204,21,.35)}' +
+    '._lk_cb{width:13px;height:13px;accent-color:#22d3ee;cursor:pointer;flex-shrink:0}' +
+    '._lk_pdot{width:9px;height:9px;border-radius:50%;background:#22d3ee;flex-shrink:0}' +
+    '._lk_pname{color:#22d3ee;font-size:11px;font-weight:700;min-width:28px}' +
+    '._lk_pdesc{color:rgba(200,210,216,.70);font-size:9px;line-height:1.3}';
+  document.head.appendChild(sty);
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.id = '_lk_svg'; svg.style.display = 'none';
+  document.body.appendChild(svg);
+
+  const htm = document.createElement('div');
+  htm.id = '_lk_html'; htm.style.display = 'none';
+  document.body.appendChild(htm);
+
+  const LABEL_DATA = {
+    "1":   ["1",   "Bucha sup. esq."],
+    "2":   ["2",   "Bucha sup. dir."],
+    "3":   ["3",   "Conex. lat. esq."],
+    "4":   ["4",   "Conex. lat. dir."],
+    "5":   ["5",   "Flange lat. esq."],
+    "6":   ["6",   "Flange lat. dir."],
+    "7":   ["7",   "Flange lat. esq."],
+    "8":   ["8",   "Flange lat. dir."],
+    "9A":  ["9A",  "Conex. lat. esq."],
+    "9B":  ["9B",  "Conex. lat. dir."],
+    "10":  ["10",  "Conex. lat. dir."],
+    "11A": ["11A", "Bucha frontal Z+"],
+    "11B": ["11B", "Bucha traseira Z-"],
+    "12":  ["12",  "Dreno fundo esq."],
+    "13":  ["13",  "Dreno fundo dir."],
+    "14":  ["14",  "Valvula alivio"]
+  };
+
+  // Cria elementos de overlay apenas para pontos calibrados
+  LEAK_ALL_LABELS.forEach(lbl => {
+    if (!(lbl in LEAK_POINTS)) return;
+    const [num, desc] = LABEL_DATA[lbl] || [lbl, ''];
+
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.id = '_lk_c_' + lbl; c.r.baseVal.value = 5;
+    c.setAttribute('fill', '#22d3ee'); c.setAttribute('stroke', '#fff');
+    c.setAttribute('stroke-width', '1.5'); c.setAttribute('display', 'none');
+    svg.appendChild(c);
+
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    l.id = '_lk_l_' + lbl;
+    l.setAttribute('stroke', 'rgba(34,211,238,.55)');
+    l.setAttribute('stroke-width', '1');
+    l.setAttribute('stroke-dasharray', '4 3');
+    l.setAttribute('display', 'none');
+    svg.appendChild(l);
+
+    const bbl = document.createElement('div');
+    bbl.id = '_lk_b_' + lbl; bbl.className = '_lk_bubble';
+    bbl.innerHTML = '<span class="_lk_title">Ponto ' + num + '</span><span class="_lk_desc">' + desc + '</span>';
+    htm.appendChild(bbl);
+  });
+})();
+
+// --- Projecao 2D do bounding box do modelo ---
+function _lkModelBB2D(W, H) {
+  if (!modelRoot) return { minX: W*.2, maxX: W*.8, minY: H*.1, maxY: H*.9 };
+  const bb = new THREE.Box3().setFromObject(modelRoot);
+  const corners = [
+    new THREE.Vector3(bb.min.x,bb.min.y,bb.min.z), new THREE.Vector3(bb.max.x,bb.min.y,bb.min.z),
+    new THREE.Vector3(bb.min.x,bb.max.y,bb.min.z), new THREE.Vector3(bb.max.x,bb.max.y,bb.min.z),
+    new THREE.Vector3(bb.min.x,bb.min.y,bb.max.z), new THREE.Vector3(bb.max.x,bb.min.y,bb.max.z),
+    new THREE.Vector3(bb.min.x,bb.max.y,bb.max.z), new THREE.Vector3(bb.max.x,bb.max.y,bb.max.z)
+  ];
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  corners.forEach(v => {
+    const p=v.clone().project(camera);
+    const sx=(p.x*.5+.5)*W, sy=(-p.y*.5+.5)*H;
+    if(sx<minX)minX=sx; if(sx>maxX)maxX=sx;
+    if(sy<minY)minY=sy; if(sy>maxY)maxY=sy;
+  });
+  return { minX,maxX,minY,maxY };
+}
+
+// --- Visibilidade por selecao ---
+function updateLeakVisibilityFromSelection() {
+  Object.keys(LEAK_POINTS).forEach(lbl => {
+    const sel = selectedLeakPoints.has(lbl);
+    if (_dotMeshes[lbl]) _dotMeshes[lbl].visible = sel;
+    if (!sel) {
+      const cEl=document.getElementById('_lk_c_'+lbl);
+      const lEl=document.getElementById('_lk_l_'+lbl);
+      const bEl=document.getElementById('_lk_b_'+lbl);
+      if(cEl) cEl.setAttribute('display','none');
+      if(lEl) lEl.setAttribute('display','none');
+      if(bEl) { bEl.style.opacity='0'; bEl.classList.remove('_lk_active'); }
+    }
+  });
+  if (leakOn) updateCallouts();
+}
+
+// --- Callouts: apenas pontos selecionados ---
+function updateCallouts() {
+  if (!leakOn) return;
+  const W=renderer.domElement.clientWidth||window.innerWidth;
+  const H=renderer.domElement.clientHeight||window.innerHeight;
+  const LW=170, LH=40, MARGIN=20, SPACING=6, PAD=8;
+  const mBB=_lkModelBB2D(W,H);
+  const modelCX=(mBB.minX+mBB.maxX)*.5;
+
+  const items = LEAK_ALL_LABELS
+    .filter(lbl => (lbl in LEAK_POINTS) && selectedLeakPoints.has(lbl))
+    .map(lbl => {
+      const pos=LEAK_POINTS[lbl];
+      const v=new THREE.Vector3(pos.x,pos.y,pos.z).project(camera);
+      const behind=v.z>=1.0;
+      const sx=(v.x*.5+.5)*W, sy=(-v.y*.5+.5)*H;
+      const csx=Math.max(PAD,Math.min(W-PAD,sx));
+      const csy=Math.max(PAD,Math.min(H-PAD,sy));
+      const side=sx<modelCX?'left':'right';
+      let lx=side==='left'?mBB.minX-MARGIN-LW:mBB.maxX+MARGIN;
+      let ly=sy-LH*.5;
+      lx=Math.max(PAD,Math.min(W-LW-PAD,lx));
+      ly=Math.max(PAD,Math.min(H-LH-PAD,ly));
+      return {lbl,sx,sy,csx,csy,behind,side,lx,ly};
+    });
+
+  ['left','right'].forEach(side => {
+    const grp=items.filter(it=>it.side===side).sort((a,b)=>a.ly-b.ly);
+    for(let pass=0;pass<15;pass++){
+      let moved=false;
+      for(let i=1;i<grp.length;i++){const gap=(grp[i-1].ly+LH+SPACING)-grp[i].ly;if(gap>0){grp[i].ly+=gap;moved=true;}}
+      for(let i=grp.length-2;i>=0;i--){const gap=(grp[i].ly+LH+SPACING)-grp[i+1].ly;if(gap>0){grp[i].ly-=gap;moved=true;}}
+      grp.forEach(it=>{it.ly=Math.max(PAD,Math.min(H-LH-PAD,it.ly));});
+      if(!moved)break;
+    }
+  });
+
+  items.forEach(it => {
+    const cEl=document.getElementById('_lk_c_'+it.lbl);
+    const lEl=document.getElementById('_lk_l_'+it.lbl);
+    const bEl=document.getElementById('_lk_b_'+it.lbl);
+    if(!cEl) return;
+    bEl.style.opacity=it.behind?'0.72':'1';
+    bEl.style.left=Math.round(it.lx)+'px';
+    bEl.style.top=Math.round(it.ly)+'px';
+    if(it.behind){
+      cEl.setAttribute('display','none'); lEl.setAttribute('display','none');
+    } else {
+      cEl.removeAttribute('display'); cEl.setAttribute('cx',Math.round(it.csx)); cEl.setAttribute('cy',Math.round(it.csy));
+      const lx2=it.side==='left'?it.lx+LW:it.lx, ly2=it.ly+LH*.5;
+      lEl.removeAttribute('display');
+      lEl.setAttribute('x1',Math.round(it.csx)); lEl.setAttribute('y1',Math.round(it.csy));
+      lEl.setAttribute('x2',Math.round(lx2));    lEl.setAttribute('y2',Math.round(ly2));
+    }
+  });
+}
+
+// --- Descricoes ---
+const LEAK_INFO = {
+  "1":"Bucha sup. esq. — flange topo",   "2":"Bucha sup. dir. — flange topo",
+  "3":"Conex. lat. esq. — zona alta",    "4":"Conex. lat. dir. — zona alta",
+  "5":"Flange lat. esq. — meio-alta",    "6":"Flange lat. dir. — meio-alta",
+  "7":"Flange lat. esq. — meio-baixa",   "8":"Flange lat. dir. — meio-baixa",
+  "9A":"Conex. lat. esq. — zona baixa",  "9B":"Conex. lat. dir. — zona baixa",
+  "10":"Conex. lat. dir. — zona baixa",
+  "11A":"Bucha frontal — parede Z+",     "11B":"Bucha traseira — parede Z-",
+  "12":"Dreno fundo esq. — base",        "13":"Dreno fundo dir. — base",
+  "14":"Valvula de alivio — topo"
+};
+
+// --- HTML do painel (apenas selecao, sem calibracao) ---
+function _lkBuildPanelHTML() {
+  let rows = '';
+  LEAK_ALL_LABELS.forEach(lbl => {
+    if (!(lbl in LEAK_POINTS)) return;
+    const chk = selectedLeakPoints.has(lbl) ? ' checked' : '';
+    rows +=
+      '<div class="_lk_pitem" data-lk="' + lbl + '">' +
+        '<input type="checkbox" class="_lk_cb" data-lk="' + lbl + '"' + chk + '>' +
+        '<span class="_lk_pdot"></span>' +
+        '<span class="_lk_pname">Pt ' + lbl + '</span>' +
+        '<span class="_lk_pdesc">' + (LEAK_INFO[lbl]||'') + '</span>' +
+      '</div>';
+  });
+  return (
+    '<div id="_lk_panel">' +
+      '<h3>Pontos de Vazamento</h3>' +
+      '<div class="_lk_actions">' +
+        '<button class="_lk_btn" id="_lk_btn_all">Mostrar todos</button>' +
+        '<button class="_lk_btn" id="_lk_btn_none">Ocultar todos</button>' +
+      '</div>' +
+      rows +
+    '</div>'
+  );
+}
+
+// --- Destaque + ease de camera ---
+function _lkSelectPoint(lbl) {
+  document.querySelectorAll('._lk_pitem').forEach(el => el.classList.remove('_lk_sel'));
+  document.querySelectorAll('._lk_bubble').forEach(el => el.classList.remove('_lk_active'));
+  Object.values(_dotMeshes).forEach(m => { m.material = m.userData.matNorm; });
+  const item = document.querySelector('._lk_pitem[data-lk="' + lbl + '"]');
+  const bub  = document.getElementById('_lk_b_' + lbl);
+  if (item) item.classList.add('_lk_sel');
+  if (bub)  bub.classList.add('_lk_active');
+  if (_dotMeshes[lbl]) _dotMeshes[lbl].material = _dotMeshes[lbl].userData.matHigh;
+  const pos = LEAK_POINTS[lbl];
+  if (pos && controls && controls.target) {
+    const tgt=new THREE.Vector3(pos.x,pos.y,pos.z), t0=controls.target.clone(), t1=performance.now(), DUR=450;
+    (function step(){ const p=Math.min(1,(performance.now()-t1)/DUR), e=p<.5?2*p*p:-1+(4-2*p)*p;
+      controls.target.lerpVectors(t0,tgt,e); controls.update(); if(p<1)requestAnimationFrame(step); })();
+  }
+}
+
+// --- Eventos do painel ---
+function _lkWirePanelEvents() {
+  document.querySelectorAll('._lk_cb').forEach(cb => {
+    cb.addEventListener('change', e => {
+      e.stopPropagation();
+      const lbl = cb.dataset.lk;
+      if (cb.checked) selectedLeakPoints.add(lbl); else selectedLeakPoints.delete(lbl);
+      updateLeakVisibilityFromSelection();
+    });
+  });
+  document.querySelectorAll('._lk_pitem').forEach(el => {
+    el.addEventListener('click', e => { if(e.target.classList.contains('_lk_cb'))return; _lkSelectPoint(el.dataset.lk); });
+  });
+  const bAll=document.getElementById('_lk_btn_all');
+  if(bAll) bAll.addEventListener('click',()=>{
+    Object.keys(LEAK_POINTS).forEach(lbl=>selectedLeakPoints.add(lbl));
+    document.querySelectorAll('._lk_cb').forEach(cb=>{cb.checked=true;});
+    updateLeakVisibilityFromSelection();
+  });
+  const bNone=document.getElementById('_lk_btn_none');
+  if(bNone) bNone.addEventListener('click',()=>{
+    selectedLeakPoints.clear();
+    document.querySelectorAll('._lk_cb').forEach(cb=>{cb.checked=false;});
+    Object.values(_dotMeshes).forEach(m=>{m.material=m.userData.matNorm;});
+    document.querySelectorAll('._lk_pitem').forEach(el=>el.classList.remove('_lk_sel'));
+    document.querySelectorAll('._lk_bubble').forEach(el=>el.classList.remove('_lk_active'));
+    updateLeakVisibilityFromSelection();
+  });
+}
+
+// --- Toggle VAZAMENTO ---
+let leakOn = false;
+let _lkPanelOrig = null;
+const btnLeak = document.getElementById('btn-leak');
+const _lkAside = document.querySelector('.info-panel');
+
+btnLeak.addEventListener('click', () => {
+  leakOn = !leakOn;
+  _dotGrp.visible = leakOn;
+  const _svg=document.getElementById('_lk_svg');
+  const _htm=document.getElementById('_lk_html');
+  if(_svg) _svg.style.display=leakOn?'':'none';
+  if(_htm) _htm.style.display=leakOn?'':'none';
+  btnLeak.classList.toggle('active', leakOn);
+
+  if (leakOn) {
+    if (_lkAside && !_lkPanelOrig) _lkPanelOrig = _lkAside.innerHTML;
+    if (_lkAside) { _lkAside.innerHTML=_lkBuildPanelHTML(); _lkWirePanelEvents(); }
+    updateLeakVisibilityFromSelection();
+  } else {
+    if (_lkAside && _lkPanelOrig) _lkAside.innerHTML=_lkPanelOrig;
+    Object.keys(LEAK_POINTS).forEach(lbl => {
+      const c=document.getElementById('_lk_c_'+lbl);
+      const l=document.getElementById('_lk_l_'+lbl);
+      const bub=document.getElementById('_lk_b_'+lbl);
+      if(c) c.setAttribute('display','none');
+      if(l) l.setAttribute('display','none');
+      if(bub){bub.style.opacity='0';bub.classList.remove('_lk_active');}
+    });
+    Object.values(_dotMeshes).forEach(m=>{m.visible=false;m.material=m.userData.matNorm;});
+  }
+});
+
+controls.addEventListener('change', updateCallouts);
+// Re-lock target to model center after each interaction (belt + suspenders)
+controls.addEventListener('end', () => {
+  if (_modelCenter) { controls.target.copy(_modelCenter); controls.update(); }
+});
+
+// ===== FIM MODULO FINAL =====
 
 function animate(){
   requestAnimationFrame(animate);
   controls.update();
   updateReadouts();
   renderer.render(scene, camera);
+  updateCallouts();
 }
 animate();
 
@@ -1514,6 +1945,7 @@ controls.addEventListener('start', () => {
     }, 6000);
   }
 });
+
 </script>
 </body>
 </html>
