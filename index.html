@@ -794,6 +794,51 @@ body{
   .btn-sep { display: none; }
 }
 
+/* ─── MOBILE_DESKTOP_FIXED patches ─────────────────────────────────────── */
+
+/* A1: Readout (HUD CAM/DIST/FOV) sobe para dentro da topbar — nao sobre o modelo */
+.readout {
+  top: 18px;
+}
+
+/* A2: Mobile — oculta HUD e gizmo (libera area do canvas) */
+@media (max-width: 860px) {
+  .readout   { display: none !important; }
+  .axis-gizmo{ display: none !important; }
+}
+
+/* A3: Mobile — layout do info-panel quando JS forca display:block (Vazamento ativo)
+   O elemento permanece display:none via CSS existente; JS sobrescreve com style.display='block' */
+@media (max-width: 860px) {
+  .info-panel {
+    bottom: calc(72px + max(8px, env(safe-area-inset-bottom, 8px)));
+    top: auto !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 52vh;
+    overflow-y: auto;
+    z-index: 20;
+    padding: 12px 14px !important;
+    font-size: 10px !important;
+  }
+}
+
+/* A4: Overlays de vazamento (SVG dots + bubbles) — z-index acima do canvas,
+   abaixo do dock (que ficara no topo em z-index 10).
+   pointer-events:none garante que toques passem para o canvas. */
+#_lk_svg  { z-index: 11 !important; }
+#_lk_html { z-index: 12 !important; }
+
+/* A5: Dock — safe-area e sem overflow horizontal no mobile */
+@media (max-width: 860px) {
+  .dock {
+    max-width: calc(100vw - 12px);
+    overflow-x: auto;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -1900,10 +1945,10 @@ btnLeak.addEventListener('click', () => {
 
   if (leakOn) {
     if (_lkAside && !_lkPanelOrig) _lkPanelOrig = _lkAside.innerHTML;
-    if (_lkAside) { _lkAside.innerHTML=_lkBuildPanelHTML(); _lkWirePanelEvents(); }
+    if (_lkAside) { _lkAside.style.display='block'; _lkAside.innerHTML=_lkBuildPanelHTML(); _lkWirePanelEvents(); }
     updateLeakVisibilityFromSelection();
   } else {
-    if (_lkAside && _lkPanelOrig) _lkAside.innerHTML=_lkPanelOrig;
+    if (_lkAside && _lkPanelOrig) { _lkAside.style.display=''; _lkAside.innerHTML=_lkPanelOrig; }
     Object.keys(LEAK_POINTS).forEach(lbl => {
       const c=document.getElementById('_lk_c_'+lbl);
       const l=document.getElementById('_lk_l_'+lbl);
