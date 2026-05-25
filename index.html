@@ -930,9 +930,40 @@ body{
     pointer-events: none !important;
   }
 }
+
+/* ─── VIDEO INTRO OVERLAY ───────────────────────────────────────────────────── */
+#_intro_overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transition: opacity 0.5s ease;
+}
+#_intro_overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+#_intro_video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 </style>
 </head>
 <body>
+
+<!-- ─── VIDEO INTRO OVERLAY ─────────────────────────────────────────────── -->
+<div id="_intro_overlay">
+  <video id="_intro_video" autoplay muted playsinline>
+    <source src="intro.mp4" type="video/mp4">
+  </video>
+</div>
+<!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <div class="grid-bg"></div>
 <div class="corner tl"></div><div class="corner tr"></div>
@@ -1758,6 +1789,26 @@ const _dotMeshes = {};
   });
 }
 
+// ─── FONTE UNICA de descricoes dos pontos ────────────────────────────────────
+const LEAK_DESC = {
+  "1":   "Solda estanho - terminal",
+  "2":   "Solda do terminal na bucha",
+  "3":   "Solda da base inox na bucha",
+  "4":   "Solda da bucha na tampa",
+  "5":   "Fechamento anel de cobre",
+  "6":   "Solda da luva na tampa",
+  "7":   "Solda pino da plaqueta",
+  "8":   "Solda da tampa na caixa",
+  "9A":  "Solda da aleta superior",
+  "9B":  "Solda da aleta inferior",
+  "10":  "Solda da braçadeira na caixa",
+  "11A": "Solda da costura - corpo",
+  "11B": "Final da solda da costura",
+  "12":  "Fechamento solda robô",
+  "13":  "Cordão de solda robô",
+  "14":  "Bujão trincado"
+};
+
 // --- CSS + overlay SVG/HTML ---
 (function _initLkOverlay() {
   const sty = document.createElement('style');
@@ -1793,29 +1844,16 @@ const _dotMeshes = {};
   htm.id = '_lk_html'; htm.style.display = 'none';
   document.body.appendChild(htm);
 
+  // LABEL_DATA: apenas num (desc vem de LEAK_DESC — fonte unica)
   const LABEL_DATA = {
-    "1":   ["1",   "Bucha sup. esq."],
-    "2":   ["2",   "Bucha sup. dir."],
-    "3":   ["3",   "Conex. lat. esq."],
-    "4":   ["4",   "Conex. lat. dir."],
-    "5":   ["5",   "Flange lat. esq."],
-    "6":   ["6",   "Flange lat. dir."],
-    "7":   ["7",   "Flange lat. esq."],
-    "8":   ["8",   "Flange lat. dir."],
-    "9A":  ["9A",  "Conex. lat. esq."],
-    "9B":  ["9B",  "Conex. lat. dir."],
-    "10":  ["10",  "Conex. lat. dir."],
-    "11A": ["11A", "Bucha frontal Z+"],
-    "11B": ["11B", "Bucha traseira Z-"],
-    "12":  ["12",  "Dreno fundo esq."],
-    "13":  ["13",  "Dreno fundo dir."],
-    "14":  ["14",  "Valvula alivio"]
+    "1":"1","2":"2","3":"3","4":"4","5":"5","6":"6","7":"7","8":"8",
+    "9A":"9A","9B":"9B","10":"10","11A":"11A","11B":"11B","12":"12","13":"13","14":"14"
   };
 
   // Cria elementos de overlay apenas para pontos calibrados
   LEAK_ALL_LABELS.forEach(lbl => {
     if (!(lbl in LEAK_POINTS)) return;
-    const [num, desc] = LABEL_DATA[lbl] || [lbl, ''];
+    const num = LABEL_DATA[lbl] || lbl; // desc vem de LEAK_DESC
 
     const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
     c.id = '_lk_c_' + lbl; c.r.baseVal.value = 5;
@@ -1833,7 +1871,7 @@ const _dotMeshes = {};
 
     const bbl = document.createElement('div');
     bbl.id = '_lk_b_' + lbl; bbl.className = '_lk_bubble';
-    bbl.innerHTML = '<span class="_lk_title">Ponto ' + num + '</span><span class="_lk_desc">' + desc + '</span>';
+    bbl.innerHTML = '<span class="_lk_title">Ponto ' + lbl + '</span><span class="_lk_desc">' + (LEAK_DESC[lbl]||'') + '</span>';
     htm.appendChild(bbl);
   });
 })();
@@ -1932,18 +1970,8 @@ function updateCallouts() {
   });
 }
 
-// --- Descricoes ---
-const LEAK_INFO = {
-  "1":"Bucha sup. esq. — flange topo",   "2":"Bucha sup. dir. — flange topo",
-  "3":"Conex. lat. esq. — zona alta",    "4":"Conex. lat. dir. — zona alta",
-  "5":"Flange lat. esq. — meio-alta",    "6":"Flange lat. dir. — meio-alta",
-  "7":"Flange lat. esq. — meio-baixa",   "8":"Flange lat. dir. — meio-baixa",
-  "9A":"Conex. lat. esq. — zona baixa",  "9B":"Conex. lat. dir. — zona baixa",
-  "10":"Conex. lat. dir. — zona baixa",
-  "11A":"Bucha frontal — parede Z+",     "11B":"Bucha traseira — parede Z-",
-  "12":"Dreno fundo esq. — base",        "13":"Dreno fundo dir. — base",
-  "14":"Valvula de alivio — topo"
-};
+// --- Descricoes: alias de LEAK_DESC (fonte unica) ---
+const LEAK_INFO = LEAK_DESC;
 
 // --- HTML do painel (apenas selecao, sem calibracao) ---
 function _lkBuildPanelHTML() {
@@ -2000,7 +2028,11 @@ function _lkWirePanelEvents() {
     });
   });
   document.querySelectorAll('._lk_pitem').forEach(el => {
-    el.addEventListener('click', e => { if(e.target.classList.contains('_lk_cb'))return; _lkSelectPoint(el.dataset.lk); });
+    el.addEventListener('click', e => {
+      if (e.target.classList.contains('_lk_cb')) return; // checkbox gerencia o proprio toggle
+      const cb = el.querySelector('._lk_cb');
+      if (cb) cb.click(); // reutiliza o handler 'change' ja existente
+    });
   });
   const bAll=document.getElementById('_lk_btn_all');
   if(bAll) bAll.addEventListener('click',()=>{
@@ -2082,6 +2114,34 @@ controls.addEventListener('start', () => {
   }
 });
 
+// ─── VIDEO INTRO ─────────────────────────────────────────────────────────────
+(function _initIntro() {
+  const overlay = document.getElementById('_intro_overlay');
+  const video   = document.getElementById('_intro_video');
+  if (!overlay) return;
+
+  function _hideIntro() {
+    overlay.classList.add('fade-out');
+    // Remove do DOM apos a transicao (0.5 s) para nao bloquear eventos
+    setTimeout(function() { overlay.style.display = 'none'; }, 500);
+  }
+
+  // Esconde apos 3 s ou ao terminar o video (o que vier primeiro)
+  var _introTimer = setTimeout(_hideIntro, 3000);
+
+  if (video) {
+    video.addEventListener('ended', function() {
+      clearTimeout(_introTimer);
+      _hideIntro();
+    });
+    // Fallback: se o video nao carregar, esconde apos 3 s mesmo assim
+    video.addEventListener('error', function() {
+      clearTimeout(_introTimer);
+      _hideIntro();
+    });
+  }
+})();
+// ─── FIM VIDEO INTRO ─────────────────────────────────────────────────────────
 // ─── MOBILE_COMPACT_FIXED ────────────────────────────────────────────────────
 (function _initMobileCompact() {
   const isMobile = () => window.matchMedia('(max-width: 860px)').matches;
