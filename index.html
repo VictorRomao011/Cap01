@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Capacitor de Potência — Visualização 3D</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -959,7 +959,7 @@ body{
 
 <!-- ─── VIDEO INTRO OVERLAY ─────────────────────────────────────────────── -->
 <div id="_intro_overlay">
-  <video id="_intro_video" autoplay muted playsinline>
+  <video id="_intro_video" autoplay muted playsinline webkit-playsinline preload="auto">
     <source src="intro.mp4" type="video/mp4">
   </video>
 </div>
@@ -2116,150 +2116,139 @@ controls.addEventListener('start', () => {
 
 // ─── VIDEO INTRO ─────────────────────────────────────────────────────────────
 (function _initIntro() {
-  const overlay = document.getElementById('_intro_overlay');
-  const video   = document.getElementById('_intro_video');
+  var overlay = document.getElementById('_intro_overlay');
+  var video   = document.getElementById('_intro_video');
   if (!overlay) return;
 
+  var _introDone = false;
   function _hideIntro() {
+    if (_introDone) return;
+    _introDone = true;
     overlay.classList.add('fade-out');
-    // Remove do DOM apos a transicao (0.5 s) para nao bloquear eventos
     setTimeout(function() { overlay.style.display = 'none'; }, 500);
   }
 
-  // Esconde apos 3 s ou ao terminar o video (o que vier primeiro)
-  var _introTimer = setTimeout(_hideIntro, 3000);
+  // Timer de seguranca: 3.5 s maximos
+  var _introTimer = setTimeout(_hideIntro, 3500);
 
   if (video) {
+    // iOS Safari exige muted=true via JS (nao so atributo) para autoplay funcionar
+    video.muted = true;
+
     video.addEventListener('ended', function() {
       clearTimeout(_introTimer);
       _hideIntro();
     });
-    // Fallback: se o video nao carregar, esconde apos 3 s mesmo assim
     video.addEventListener('error', function() {
       clearTimeout(_introTimer);
       _hideIntro();
     });
+
+    // play() explicito — necessario em iOS 10+ e Android Chrome
+    var playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise.then(function() {
+        // Autoplay ok — timer e ended gerenciam o fechamento
+      }).catch(function() {
+        // Autoplay bloqueado: timer ja esta correndo (3.5 s) e fechara silenciosamente
+      });
+    }
+  } else {
+    clearTimeout(_introTimer);
+    setTimeout(_hideIntro, 1000);
   }
 })();
 // ─── FIM VIDEO INTRO ─────────────────────────────────────────────────────────
 // ─── MOBILE_COMPACT_FIXED ────────────────────────────────────────────────────
 (function _initMobileCompact() {
   const isMobile = () => window.matchMedia('(max-width: 860px)').matches;
-  let _mcActiveLbl = null;
 
-  // ── Gerencia classe _lk_mobile_active nos baloes ─────────────────────────
-  function _mcSetActiveBubble(lbl) {
-    _mcActiveLbl = lbl;
-    document.querySelectorAll('._lk_bubble').forEach(bbl => {
-      const l = bbl.id.replace('_lk_b_', '');
-      bbl.classList.toggle('_lk_mobile_active', l === lbl && selectedLeakPoints.has(l));
+  // ── Sincroniza _lk_mobile_active em TODOS os baloes selecionados ─────────
+  // Todos os pontos em selectedLeakPoints recebem _lk_mobile_active,
+  // ficando visiveis simultaneamente no mobile.
+  function _mcSyncAllBubbles() {
+    if (!isMobile()) return;
+    document.querySelectorAll('._lk_bubble').forEach(function(bbl) {
+      var l = bbl.id.replace('_lk_b_', '');
+      bbl.classList.toggle('_lk_mobile_active', selectedLeakPoints.has(l));
     });
   }
 
-  function _mcAutoActivate() {
-    if (_mcActiveLbl && selectedLeakPoints.has(_mcActiveLbl)) {
-      _mcSetActiveBubble(_mcActiveLbl); return;
-    }
-    _mcActiveLbl = null;
-    for (const l of selectedLeakPoints) { _mcActiveLbl = l; break; }
-    _mcSetActiveBubble(_mcActiveLbl);
-  }
-
-  // ── Atualiza contador do handle ──────────────────────────────────────────
+  // ── Contador do handle ──────────────────────────────────────────────────
   function _mcUpdateCount() {
-    const el = document.getElementById('_lk_bs_count');
+    var el = document.getElementById('_lk_bs_count');
     if (!el) return;
-    const c = selectedLeakPoints.size;
+    var c = selectedLeakPoints.size;
     el.textContent = c > 0 ? c + ' sel.' : 'nenhum sel.';
   }
 
-  // ── Constroi handle do bottom-sheet ─────────────────────────────────────
+  // ── Handle do bottom-sheet ───────────────────────────────────────────────
   function _mcBuildHandle() {
-    const h = document.createElement('div');
+    var h = document.createElement('div');
     h.id = '_lk_bs_handle';
-    const c = selectedLeakPoints.size;
+    var c = selectedLeakPoints.size;
     h.innerHTML =
       '<span id="_lk_bs_title">Pontos de Vazamento</span>' +
-      '<span id="_lk_bs_count">' + (c > 0 ? c + '\u00a0sel.' : 'nenhum\u00a0sel.') + '</span>' +
+      '<span id="_lk_bs_count">' + (c > 0 ? c + ' sel.' : 'nenhum sel.') + '</span>' +
       '<span id="_lk_bs_arrow">&#9650;</span>';
-    h.addEventListener('click', () => {
+    h.addEventListener('click', function() {
       _lkAside.classList.toggle('bs-open');
-      const arr = document.getElementById('_lk_bs_arrow');
+      var arr = document.getElementById('_lk_bs_arrow');
       if (arr) arr.style.transform = _lkAside.classList.contains('bs-open') ? 'rotate(180deg)' : '';
     });
     return h;
   }
 
-  // ── Wire eventos mobile apos o painel ser construido ────────────────────
+  // ── Wire eventos mobile apos painel construido ───────────────────────────
   function _mcWireMobileEvents() {
     if (!isMobile()) return;
 
-    // Injeta handle se ainda nao existir
     if (_lkAside && !document.getElementById('_lk_bs_handle')) {
       _lkAside.insertBefore(_mcBuildHandle(), _lkAside.firstChild);
     }
     _mcUpdateCount();
 
-    // Checkboxes: atualiza contador + balao ativo
-    document.querySelectorAll('._lk_cb').forEach(cb => {
-      cb.addEventListener('change', () => {
+    // Checkboxes: atualiza contador e sincroniza TODOS os baloes
+    document.querySelectorAll('._lk_cb').forEach(function(cb) {
+      cb.addEventListener('change', function() {
         _mcUpdateCount();
-        if (!cb.checked && cb.dataset.lk === _mcActiveLbl) {
-          _mcActiveLbl = null;
-          for (const l of selectedLeakPoints) { _mcActiveLbl = l; break; }
-        }
-        _mcSetActiveBubble(_mcActiveLbl);
+        _mcSyncAllBubbles();
       });
     });
 
-    // Itens da lista: define balao ativo ao tocar
-    document.querySelectorAll('._lk_pitem').forEach(el => {
-      el.addEventListener('click', e => {
-        if (e.target.classList.contains('_lk_cb')) return;
-        _mcSetActiveBubble(el.dataset.lk);
-      });
+    // Pitem click: o handler existente (cb.click) ja dispara 'change' acima
+
+    // "Mostrar todos"
+    var bAll = document.getElementById('_lk_btn_all');
+    if (bAll) bAll.addEventListener('click', function() {
+      setTimeout(function() { _mcUpdateCount(); _mcSyncAllBubbles(); }, 0);
     });
 
-    // Botao "Mostrar todos": ativa primeiro ponto apos delay
-    const bAll = document.getElementById('_lk_btn_all');
-    if (bAll) bAll.addEventListener('click', () => {
-      setTimeout(() => { _mcUpdateCount(); _mcAutoActivate(); }, 0);
-    });
-
-    // Botao "Ocultar todos": limpa ativo
-    const bNone = document.getElementById('_lk_btn_none');
-    if (bNone) bNone.addEventListener('click', () => {
-      setTimeout(() => { _mcActiveLbl = null; _mcUpdateCount(); _mcSetActiveBubble(null); }, 0);
+    // "Ocultar todos"
+    var bNone = document.getElementById('_lk_btn_none');
+    if (bNone) bNone.addEventListener('click', function() {
+      setTimeout(function() { _mcUpdateCount(); _mcSyncAllBubbles(); }, 0);
     });
   }
 
-  // ── Reage ao toggle do botao VAZAMENTO ──────────────────────────────────
-  btnLeak.addEventListener('click', () => {
+  // ── Toggle do botao VAZAMENTO ────────────────────────────────────────────
+  btnLeak.addEventListener('click', function() {
     if (!isMobile()) return;
     if (leakOn) {
       _mcWireMobileEvents();
-      _mcAutoActivate();
+      _mcSyncAllBubbles();
     } else {
-      _mcActiveLbl = null;
       if (_lkAside) _lkAside.classList.remove('bs-open');
-      document.querySelectorAll('._lk_bubble').forEach(b => b.classList.remove('_lk_mobile_active'));
+      document.querySelectorAll('._lk_bubble').forEach(function(b) {
+        b.classList.remove('_lk_mobile_active');
+      });
     }
   });
 
-  // ── Sincroniza _lk_mobile_active com _lk_active (clique em item da lista) ─
-  // _lkSelectPoint adiciona _lk_active via _lkWirePanelEvents;
-  // MutationObserver detecta a mudanca e sincroniza o balao mobile ativo.
-  const htmEl = document.getElementById('_lk_html');
-  if (htmEl) {
-    new MutationObserver(() => {
-      if (!isMobile() || !leakOn) return;
-      const active = htmEl.querySelector('._lk_bubble._lk_active');
-      if (active) {
-        const lbl = active.id.replace('_lk_b_', '');
-        if (lbl !== _mcActiveLbl) _mcSetActiveBubble(lbl);
-      }
-    }).observe(htmEl, { subtree: true, attributes: true, attributeFilter: ['class'] });
-  }
+  // ── Re-sincroniza ao resize / orientationchange ──────────────────────────
+  window.addEventListener('resize', function() {
+    if (isMobile() && leakOn) _mcSyncAllBubbles();
+  });
 
 })();
 // ─── END MOBILE_COMPACT_FIXED ────────────────────────────────────────────────
