@@ -839,6 +839,97 @@ body{
   }
 }
 
+/* ─── MOBILE_COMPACT_FIXED patches ─────────────────────────────────────────── */
+
+/* MC1: Bottom-sheet para .info-panel no mobile
+   Substitui o posicionamento do MOBILE_DESKTOP_FIXED (bottom: calc(72px...))
+   com um painel fixo na base, colapsavel (52px fechado, 62vh aberto). */
+@media (max-width: 860px) {
+  .info-panel {
+    bottom: 0 !important;
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 16px 16px 0 0 !important;
+    max-height: 52px !important;
+    overflow: hidden !important;
+    transition: max-height .28s cubic-bezier(.4,0,.2,1) !important;
+    padding: 0 !important;
+    padding-bottom: max(0px, env(safe-area-inset-bottom)) !important;
+    z-index: 25 !important;
+    font-size: 11px !important;
+  }
+  .info-panel.bs-open {
+    max-height: 62vh !important;
+    overflow-y: auto !important;
+  }
+}
+
+/* MC2: Handle do bottom-sheet (oculto no desktop) */
+#_lk_bs_handle { display: none; }
+@media (max-width: 860px) {
+  #_lk_bs_handle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 52px;
+    min-height: 52px;
+    padding: 0 18px;
+    cursor: pointer;
+    background: rgba(11, 18, 26, .96);
+    border-radius: 16px 16px 0 0;
+    border-bottom: 1px solid rgba(190, 205, 215, .18);
+    user-select: none;
+    pointer-events: all;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  #_lk_bs_title {
+    color: #22d3ee;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: "Segoe UI", Arial, sans-serif;
+    letter-spacing: .01em;
+  }
+  #_lk_bs_count {
+    color: rgba(200, 210, 216, .65);
+    font-size: 11px;
+    font-family: "Segoe UI", Arial, sans-serif;
+    margin-left: auto;
+    margin-right: 10px;
+  }
+  #_lk_bs_arrow {
+    color: rgba(200, 210, 216, .60);
+    font-size: 14px;
+    display: inline-block;
+    transition: transform .28s ease;
+    line-height: 1;
+  }
+  #_lk_panel {
+    padding: 8px 14px 8px !important;
+    max-height: none !important;
+  }
+}
+
+/* MC3: Baloes menores no mobile; regra de 1 balao ativo por vez
+   _lk_mobile_active e gerenciado pelo JS; !important vence o style.opacity do updateCallouts */
+@media (max-width: 860px) {
+  ._lk_bubble {
+    width: 150px !important;
+    padding: 4px 7px !important;
+  }
+  ._lk_title { font-size: 10px !important; }
+  ._lk_desc  { font-size: 8px !important; }
+  /* Oculta todos os baloes exceto o ativo */
+  ._lk_bubble:not(._lk_mobile_active) {
+    opacity: 0 !important;
+    pointer-events: none !important;
+  }
+}
 </style>
 </head>
 <body>
@@ -1991,6 +2082,127 @@ controls.addEventListener('start', () => {
   }
 });
 
+// ─── MOBILE_COMPACT_FIXED ────────────────────────────────────────────────────
+(function _initMobileCompact() {
+  const isMobile = () => window.matchMedia('(max-width: 860px)').matches;
+  let _mcActiveLbl = null;
+
+  // ── Gerencia classe _lk_mobile_active nos baloes ─────────────────────────
+  function _mcSetActiveBubble(lbl) {
+    _mcActiveLbl = lbl;
+    document.querySelectorAll('._lk_bubble').forEach(bbl => {
+      const l = bbl.id.replace('_lk_b_', '');
+      bbl.classList.toggle('_lk_mobile_active', l === lbl && selectedLeakPoints.has(l));
+    });
+  }
+
+  function _mcAutoActivate() {
+    if (_mcActiveLbl && selectedLeakPoints.has(_mcActiveLbl)) {
+      _mcSetActiveBubble(_mcActiveLbl); return;
+    }
+    _mcActiveLbl = null;
+    for (const l of selectedLeakPoints) { _mcActiveLbl = l; break; }
+    _mcSetActiveBubble(_mcActiveLbl);
+  }
+
+  // ── Atualiza contador do handle ──────────────────────────────────────────
+  function _mcUpdateCount() {
+    const el = document.getElementById('_lk_bs_count');
+    if (!el) return;
+    const c = selectedLeakPoints.size;
+    el.textContent = c > 0 ? c + ' sel.' : 'nenhum sel.';
+  }
+
+  // ── Constroi handle do bottom-sheet ─────────────────────────────────────
+  function _mcBuildHandle() {
+    const h = document.createElement('div');
+    h.id = '_lk_bs_handle';
+    const c = selectedLeakPoints.size;
+    h.innerHTML =
+      '<span id="_lk_bs_title">Pontos de Vazamento</span>' +
+      '<span id="_lk_bs_count">' + (c > 0 ? c + '\u00a0sel.' : 'nenhum\u00a0sel.') + '</span>' +
+      '<span id="_lk_bs_arrow">&#9650;</span>';
+    h.addEventListener('click', () => {
+      _lkAside.classList.toggle('bs-open');
+      const arr = document.getElementById('_lk_bs_arrow');
+      if (arr) arr.style.transform = _lkAside.classList.contains('bs-open') ? 'rotate(180deg)' : '';
+    });
+    return h;
+  }
+
+  // ── Wire eventos mobile apos o painel ser construido ────────────────────
+  function _mcWireMobileEvents() {
+    if (!isMobile()) return;
+
+    // Injeta handle se ainda nao existir
+    if (_lkAside && !document.getElementById('_lk_bs_handle')) {
+      _lkAside.insertBefore(_mcBuildHandle(), _lkAside.firstChild);
+    }
+    _mcUpdateCount();
+
+    // Checkboxes: atualiza contador + balao ativo
+    document.querySelectorAll('._lk_cb').forEach(cb => {
+      cb.addEventListener('change', () => {
+        _mcUpdateCount();
+        if (!cb.checked && cb.dataset.lk === _mcActiveLbl) {
+          _mcActiveLbl = null;
+          for (const l of selectedLeakPoints) { _mcActiveLbl = l; break; }
+        }
+        _mcSetActiveBubble(_mcActiveLbl);
+      });
+    });
+
+    // Itens da lista: define balao ativo ao tocar
+    document.querySelectorAll('._lk_pitem').forEach(el => {
+      el.addEventListener('click', e => {
+        if (e.target.classList.contains('_lk_cb')) return;
+        _mcSetActiveBubble(el.dataset.lk);
+      });
+    });
+
+    // Botao "Mostrar todos": ativa primeiro ponto apos delay
+    const bAll = document.getElementById('_lk_btn_all');
+    if (bAll) bAll.addEventListener('click', () => {
+      setTimeout(() => { _mcUpdateCount(); _mcAutoActivate(); }, 0);
+    });
+
+    // Botao "Ocultar todos": limpa ativo
+    const bNone = document.getElementById('_lk_btn_none');
+    if (bNone) bNone.addEventListener('click', () => {
+      setTimeout(() => { _mcActiveLbl = null; _mcUpdateCount(); _mcSetActiveBubble(null); }, 0);
+    });
+  }
+
+  // ── Reage ao toggle do botao VAZAMENTO ──────────────────────────────────
+  btnLeak.addEventListener('click', () => {
+    if (!isMobile()) return;
+    if (leakOn) {
+      _mcWireMobileEvents();
+      _mcAutoActivate();
+    } else {
+      _mcActiveLbl = null;
+      if (_lkAside) _lkAside.classList.remove('bs-open');
+      document.querySelectorAll('._lk_bubble').forEach(b => b.classList.remove('_lk_mobile_active'));
+    }
+  });
+
+  // ── Sincroniza _lk_mobile_active com _lk_active (clique em item da lista) ─
+  // _lkSelectPoint adiciona _lk_active via _lkWirePanelEvents;
+  // MutationObserver detecta a mudanca e sincroniza o balao mobile ativo.
+  const htmEl = document.getElementById('_lk_html');
+  if (htmEl) {
+    new MutationObserver(() => {
+      if (!isMobile() || !leakOn) return;
+      const active = htmEl.querySelector('._lk_bubble._lk_active');
+      if (active) {
+        const lbl = active.id.replace('_lk_b_', '');
+        if (lbl !== _mcActiveLbl) _mcSetActiveBubble(lbl);
+      }
+    }).observe(htmEl, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  }
+
+})();
+// ─── END MOBILE_COMPACT_FIXED ────────────────────────────────────────────────
 </script>
 </body>
 </html>
